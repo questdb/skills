@@ -1,6 +1,8 @@
 # QuestDB skill for coding agents
 
-Tested with both **Claude Code** and **Codex**.
+Teaches coding agents (Claude Code, Codex and others) to write correct QuestDB
+SQL and client code, and to build live dashboards in the QuestDB Web Console.
+Covers QuestDB 10.2 and QuestDB Enterprise 4.2.
 
 ## Installation
 
@@ -28,88 +30,77 @@ your agent picks it up:
 
 The folder must contain SKILL.md and the references/ directory.
 
+### Dashboards: the QuestDB MCP server
+
+To let the agent build dashboards and notebooks in the Web Console, also
+install the QuestDB MCP server and keep the Web Console open in a browser:
+
+```shell
+npx @questdb/mcp-server-questdb@latest setup
+```
+
+## What the skill covers
+
+- QuestDB SQL: TICK time filters, SAMPLE BY, LATEST ON, DECLARE variables and
+  value lists, ASOF / HORIZON / WINDOW / LATERAL joins, window functions,
+  GROUPING SETS, SUBSAMPLE, PIVOT, UNNEST, arrays.
+- Schema design: designated timestamps, partitioning, DEDUP UPSERT and SKIP,
+  TTL, Parquet partitions, indexes.
+- Materialized views (including passthrough views and EXPIRE ROWS), live
+  views, and regular views with parameters.
+- Ingestion and queries with the QWP clients (Python, Java, Go, Rust, C/C++,
+  .NET, Node.js, Ruby, browser), plus REST, PGWire and ILP.
+- Web Console dashboards through the MCP server, with two complete reference
+  dashboards (a live FX order book and an instance monitoring dashboard).
+- Monitoring with `sys.metrics` and WAL telemetry.
+- Enterprise: RBAC, tokens, failover, storage policies and cold storage.
+- Finance recipes: indicators, execution quality (markout, slippage,
+  implementation shortfall), and an index of the official cookbook.
+- Grafana, when you ask for it.
+
 ## Try it out
 
-With this prompt:
+With QuestDB running locally and the MCP server installed:
 
 ```
-I have QuestDB and Grafana running locally with default ports. Grafana password is YOUR_PASSWORD.
+Build a real-time crypto market data pipeline using cryptofeed (OKX exchange) ingesting trades and L2 order
+book data into QuestDB. Symbols: BTC-USDT,ETH-USDT,SOL-USDT,XRP-USDT,ADA-USDT,AVAX-USDT,DOT-USDT,LINK-USDT.
 
-Build a real-time crypto market data pipeline using cryptofeed (OKX exchange) ingesting trades and L2 order book data
-into QuestDB. Symbols:BTC-USDT,ETH-USDT,SOL-USDT,XRP-USDT,ADA-USDT,AVAX-USDT,DOT-USDT,LINK-USDT,ATOM-USDT,UNI-USDT,LTC-USDT,NEAR-USDT,APT-USDT,ARB-USDT,OP-USDT, POL-USDT,FIL-USDT,SUI-USDT.
+Then build a live dashboard in the QuestDB Web Console with OHLC candlesticks and volume, VWAP, Bollinger
+Bands, RSI, a market depth chart and a spread panel, with a symbol variable.
 
-Then create a Grafana dashboard with OHLC candlesticks, VWAP, Bollinger Bands, and RSI panels, with a symbol dropdown.
-
-Do this in python, please. I have a venv which should contain most (if not all) the dependencies you need at
-  /location/of/your/venv. Please use it
-
-
-Do NOT use Explore() on any library. Do NOT verify infrastructure is running. Do NOT read reference files beyond the
-skill itself. Do NOT use task tracking. Just write the files and run them. Open the dashboard in my browser once
-finished, please. Do not ask for permissions to read local files or to create the python scripts.
-
+Do this in python. Create a venv in the current folder and install the bare minimum you need.
 ```
 
-Or if you don't have QuestDB and Grafana locally, you can say:
+If you don't have QuestDB running, add "start QuestDB with docker (latest image)" to the prompt.
+
+To use Grafana instead, ask for it explicitly ("...then create a Grafana dashboard...") and say whether
+Grafana is already running.
+
+Other things to try:
 
 ```
-Please start grafana and questdb (latest images) using docker and configure a datasource for grafana to access questdb.
-
-  Build a real-time crypto market data pipeline using cryptofeed (OKX exchange) ingesting trades and L2 order book data
-  into QuestDB. Symbols:BTC-USDT,ETH-USDT,SOL-USDT,XRP-USDT,ADA-USDT,AVAX-USDT,DOT-USDT,LINK-USDT,ATOM-USDT,UNI-USDT,LTC-US
-  DT,NEAR-USDT,APT-USDT,ARB-USDT,OP-USDT, POL-USDT,FIL-USDT,SUI-USDT.
-
-  Then create a Grafana dashboard with OHLC candlesticks, VWAP, Bollinger Bands, and RSI panels, with a symbol dropdown.
-
-  Do this in python, please. Create a venv in the current folder and install the bare minimum you need for this project.
-
-
-  Do NOT use Explore() on any library. Do NOT verify infrastructure is running. Do NOT read reference files beyond the
-  skill itself. Do NOT use task tracking. Just write the files and run them. Open the dashboard in my browser once
-  finished, please. Do not ask for permissions to read local files or to create the python scripts, or to use venv
-  commands, or to start docker images and check status.
+Using the QuestDB demo dataset, build a notebook that compares markouts per ECN at 1s, 5s, 30s and 1m.
 ```
 
-You can then follow up with:
+```
+Build a monitoring dashboard for my QuestDB instance from sys.metrics.
+```
+
+```
+Keep only the latest reading per sensor in a materialized view, and a rolling 20-row Bollinger band
+as a live view.
+```
+
+You can follow up with:
 
 ```
 what other indicators can I add to the dashboard for this dataset?
 ```
 
-The following indicators are embedded into the skill and should be fast to generate. For other
-indicators, the skill will relay on QuestDB online docs.
-
-
-Aggressor imbalance
-ATR
-Bid-ask spread
-Bollinger Bands
-Bollinger BandWidth
-Compound interest
-Cumulative product
-Donchian Channels
-Keltner Channels
-Liquidity comparison
-MACD
-Maximum drawdown
-OBV
-OHLC bars
-Rate of Change
-Realized volatility
-Rolling std dev
-RSI
-Stochastic Oscillator
-TICK & TRIN
-Volume profile
-Volume spikes
-VWAP
-
-
-You can just ask claude to add any indicators it suggests.
-
-When done, if you want to destroy everything, you can ask
+When done, if you want to remove everything, you can ask:
 
 ```
-please, stop ingestion, remove all the images, containers, view, tables, and local artifacts you created in this session,
-  including the feedhandler log file, so we can restart from scratch
+please, stop ingestion, remove the containers, views, tables, notebooks and local files you created in
+this session, so we can restart from scratch
 ```
