@@ -33,7 +33,7 @@ file only when the task needs it:
 | Build a dashboard or notebook in the Web Console (preferred over Grafana) | `references/dashboards-mcp.md` and its `references/examples/*.json` |
 | Materialized views (passthrough, EXPIRE ROWS), live views, views, DEDUP, TTL, storage policy, Parquet, indexes | `references/views-and-storage.md` |
 | Monitor an instance (`sys.metrics`, WAL telemetry, meta functions) | `references/monitoring.md` |
-| Writing novel SQL, or a PostgreSQL habit might not apply | `references/common-mistakes.md` |
+| Any SQL beyond the examples in this file: read it before writing the query | `references/common-mistakes.md` |
 | "Does QuestDB have function X?", signatures, keywords, types | `references/sql-grammar.md` |
 | Indicators (MACD, ATR, Stochastic, Keltner, OBV, drawdown, ...) | `references/indicators.md` |
 | Finance/TCA or time-series recipes (markout, slippage, IS, OFI, FILL patterns, subtotals, ...) | `references/cookbook.md` |
@@ -45,7 +45,8 @@ file only when the task needs it:
 Working style:
 - Write the files and run them. Do not explore library sources, check
   package versions or re-verify infrastructure the user said is running.
-- Do not read reference files for topics already covered here.
+- Do not read reference files for topics already covered here, except
+  `references/common-mistakes.md`, which applies to every query you write.
 - When you need syntax not covered here or in a reference, fetch the doc page
   as markdown (below) instead of guessing.
 
@@ -72,6 +73,17 @@ Working style:
    everywhere); `STORAGE POLICY` on Enterprise tables.
 8. Use **SYMBOL** for repeated strings, **VARCHAR** for unique strings
    (`STRING` is legacy). Arrays are **1-indexed**.
+9. **Valid-looking SQL that fails.** These come up most; the full list, with
+   workarounds, is in `references/common-mistakes.md`:
+   - `col IN (SELECT ...)` works only when `col` is a SYMBOL. For UUID,
+     VARCHAR or numbers, `JOIN (SELECT DISTINCT ...)` instead.
+   - A HORIZON JOIN cannot be combined with other joins, and each side must
+     be a single table. Join dimension tables after aggregating.
+   - Keyed `count_distinct()` rejects DOUBLE: `count_distinct(px::varchar)`.
+   - `CASE WHEN uuid_col IS NULL` fails: `CASE WHEN uuid_col IS NOT NULL
+     THEN 0 ELSE 1 END`.
+   - TICK `..` works only between `$` variables, not literal dates. There is
+     no `ms` unit: write `100T`.
 
 ## Live Documentation
 
@@ -301,6 +313,11 @@ ORDER BY o.id, t.qty DESC;
   (`left-hand side of HORIZON JOIN can only be a table with an optional
   filter`). To add columns from another table, group the HORIZON by the key
   in a CTE and join the dimension table to that result.
+- A left side without a designated timestamp (a table without one, or a CTE
+  that lost it) needs `timestamp()` on an ordered subquery, inside the CTE
+  body: `WITH f AS ((SELECT * FROM ledger ORDER BY ts) timestamp(ts))`.
+  `WITH f AS (SELECT ...) timestamp(ts)` is a syntax error. This does not
+  lift the single-table rule.
 - **WINDOW**: units spelled out (`seconds`, `minutes`); bounds can be left
   columns. No GROUP BY or window functions at the same level.
 - **LATERAL**: INNER, LEFT or CROSS only; the subquery can use outer columns,

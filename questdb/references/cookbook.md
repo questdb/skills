@@ -17,16 +17,28 @@ When asked to find issues, anomalies or patterns without a specific question:
 
 1. Profile first: row counts, time span, gaps, nulls (`count() - count(col)`),
    duplicates per key, and late or restated rows.
-2. Break each metric down by every categorical column in the schema, and by
+2. Look for gaps at a resolution finer than the gap. Per source, measure the
+   time between rows (`ts - lag(ts) OVER (PARTITION BY source ORDER BY ts)`,
+   in the timestamp's unit, since `datediff()` truncates to whole units), or
+   count rows with `SAMPLE BY 10s FROM ... TO ... FILL(0)` and flag buckets
+   far below that source's normal rate. Coarse buckets with a fixed
+   threshold hide short outages. Start on a bounded window: a window function
+   over a full day of a busy feed is slow.
+3. Break each metric down by every categorical column in the schema, and by
    pairs of them. An effect concentrated in one segment can vanish in the
-   average of a mix.
-3. Match time scales to the data. Derive horizons and bucket sizes from the
+   average of a mix. When single values of a key are too sparse to show
+   anything, group them by a derived attribute (a name prefix or pattern, a
+   lookup table, size or activity tiers): the grouping that matters may not
+   be a column. Split a group further only while each cell keeps enough rows
+   to judge. If a finer split leaves cells too small, report the coarser
+   group's result rather than dropping it.
+4. Match time scales to the data. Derive horizons and bucket sizes from the
    gaps between events and how long orders or positions live, and compare
    several scales instead of stopping at a default.
-4. Separate common moves from specific ones. Before blaming one entity
+5. Separate common moves from specific ones. Before blaming one entity
    (counterparty, venue, device, host), check whether the whole population
    moved at the same time, against a benchmark or its peers.
-5. Report each finding with its size, the rows and period it affects, and the
+6. Report each finding with its size, the rows and period it affects, and the
    query that shows it.
 
 ## Finance: Post-Trade and Execution Quality (TCA)
