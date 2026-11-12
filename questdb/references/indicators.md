@@ -1,7 +1,8 @@
 # Financial Indicator SQL Recipes
 
-Tested SQL from the QuestDB cookbook. OHLC, VWAP, Bollinger Bands, and RSI are
-already inline in SKILL.md — this file covers everything else.
+Tested SQL from the QuestDB cookbook. OHLC, VWAP, Bollinger Bands and RSI are
+in `examples/fx-live-dashboard.json` (notebook form) and `grafana.md` (Grafana
+form); this file covers the others.
 
 ## Column Mapping
 
@@ -10,31 +11,38 @@ Demo tables use different schemas from the user's actual tables. Use this mappin
 | Demo column | Trades table (`trades`) | OHLC table (user-built via SAMPLE BY) |
 |---|---|---|
 | `timestamp` | `ts` | `ts` |
-| `close` | N/A — use `last(price)` in SAMPLE BY | `close` |
-| `open` | N/A — use `first(price)` in SAMPLE BY | `open` |
-| `high` | N/A — use `max(price)` in SAMPLE BY | `high` |
-| `low` | N/A — use `min(price)` in SAMPLE BY | `low` |
+| `close` | N/A: use `last(price)` in SAMPLE BY | `close` |
+| `open` | N/A: use `first(price)` in SAMPLE BY | `open` |
+| `high` | N/A: use `max(price)` in SAMPLE BY | `high` |
+| `low` | N/A: use `min(price)` in SAMPLE BY | `low` |
 | `total_volume` / `volume` | `sum(amount)` in SAMPLE BY | `volume` |
 | `quantity` | `amount` | N/A |
 | `price` | `price` | N/A |
 
-**For Grafana panels**: Use the Grafana-ready versions in the section below — they
-use `$__timeFilter`, `$symbol`, and `$__interval` with the `trades` table directly.
-No translation needed.
+**For Grafana panels** (only when the user asks for Grafana): use the
+Grafana-ready versions in the next section. They use `$__timeFilter`,
+`$symbol`, and `$__interval` with the `trades` table directly.
 
 Demo tables used in standalone recipes below:
-- `market_data_ohlc_15m` — pre-aggregated 15m OHLC candles (timestamp, symbol, open, high, low, close)
-- `fx_trades` — raw tick trades (timestamp, symbol, price, quantity)
-- `fx_trades_ohlc_1m` — materialized view 1m OHLC (timestamp, symbol, open, high, low, close, total_volume)
-- `core_price` — bid/ask quotes (timestamp, symbol, bid_price, ask_price)
-- `market_data` — order book with arrays (timestamp, symbol, bids, asks)
-- `trades` — crypto trades (timestamp, symbol, price, amount, side)
+- `market_data_ohlc_15m`: pre-aggregated 15m OHLC candles (timestamp, symbol, open, high, low, close)
+- `fx_trades`: raw tick trades (timestamp, symbol, price, quantity)
+- `fx_trades_ohlc_1m`: materialized view 1m OHLC (timestamp, symbol, open, high, low, close, total_volume)
+- `core_price`: bid/ask quotes (timestamp, symbol, bid_price, ask_price)
+- `market_data`: order book with arrays (timestamp, symbol, bids, asks)
+- `trades`: crypto trades (timestamp, symbol, price, amount, side)
 
 Key QuestDB pattern: `avg(value, 'period', N)` is the native EMA window function
-(α = 2/(N+1)). For Wilder's smoothing (α = 1/N), use `avg(value, 'period', 2N-1)`.
+(α = 2/(N+1)). For Wilder's smoothing (α = 1/N), use `avg(value, 'period', 2N-1)`
+or `avg(value, 'alpha', 1.0/N)`. EMA works on CTE-computed columns, and rejects
+ROWS/RANGE frame clauses. Windowed `stddev_samp()` works too, so Bollinger can
+use it directly instead of the `sqrt(avg(x*x) - avg(x)^2)` formula below
+(that formula is still required inside live views).
 
-**⚠ EMA caveat**: `avg(col, 'period', N)` may fail on computed/CTE columns. If it
-errors, fall back to SMA: `AVG(col) OVER (ORDER BY ts ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW)`.
+Time filters below use TICK strings stored in `DECLARE` variables
+(`@lookback := '$now - 1M..$now'`). In a Web Console notebook, replace them
+with the notebook's `@timeFilter` or its own variables. For a live,
+per-row-maintained version of SMA, Bollinger or EMA, see live views in
+`views-and-storage.md`.
 
 ---
 
@@ -43,7 +51,7 @@ errors, fall back to SMA: `AVG(col) OVER (ORDER BY ts ROWS BETWEEN N-1 PRECEDING
 Copy-paste these into Grafana panels. They build OHLC from the raw `trades` table
 using SAMPLE BY, so no pre-built candle table is needed.
 
-### ATR — Grafana-ready
+### ATR: Grafana-ready
 
 ```sql
 WITH ohlc AS (
@@ -70,10 +78,10 @@ SELECT ts AS time, tr AS true_range,
 FROM true_range;
 ```
 
-Uses SMA (ROWS BETWEEN) instead of EMA because `avg(tr, 'period', 14)` may fail
-on CTE-computed columns.
+This is an SMA-smoothed ATR. For the classic Wilder ATR use
+`avg(tr, 'period', 27) OVER (ORDER BY ts)`.
 
-### OBV — Grafana-ready
+### OBV: Grafana-ready
 
 ```sql
 WITH ohlc AS (
@@ -99,7 +107,7 @@ SELECT ts AS time,
 FROM with_direction;
 ```
 
-### MACD — Grafana-ready
+### MACD: Grafana-ready
 
 ```sql
 WITH ohlc AS (
@@ -131,9 +139,6 @@ SELECT ts AS time,
 FROM with_signal;
 ```
 
-Note: MACD uses EMA on `close` from a CTE — this works because `close` is a
-direct column alias, not a computed expression. If it errors, replace `avg(..., 'period', N)`
-with SMA using ROWS BETWEEN.
 
 ---
 
@@ -272,10 +277,6 @@ ORDER BY timestamp;
 ```
 
 Stop-loss: `entry_price - 2 * atr`. Position sizing: `(account_size * 0.01) / atr`.
-
-**⚠ EMA caveat**: `avg(tr, 'period', 14)` may fail on CTE-computed `tr` column.
-Use `AVG(tr) OVER (ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW)` as fallback.
-See Grafana-ready version above for a working example.
 
 ---
 
@@ -460,7 +461,7 @@ FROM with_direction
 ORDER BY timestamp;
 ```
 
-Absolute OBV value is meaningless — only direction and divergence matter.
+Absolute OBV value is meaningless: only direction and divergence matter.
 
 ---
 

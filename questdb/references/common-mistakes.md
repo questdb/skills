@@ -1,139 +1,150 @@
 # QuestDB Common Mistakes
 
-This is the most critical reference in the skill. Every row represents a pattern
-that LLMs frequently hallucinate because they exist in PostgreSQL but NOT in
-QuestDB, or because QuestDB's syntax differs from what an LLM would guess.
+Patterns that LLMs get wrong because they exist in PostgreSQL but not in
+QuestDB, because QuestDB's syntax differs, or because older QuestDB versions
+behaved differently. Read this before writing novel QuestDB SQL.
 
-**Read this before writing any QuestDB SQL.**
+## SQL Syntax
 
-## SQL Syntax Mistakes
-
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `GROUP BY time_bucket('5m', ts)` | `SAMPLE BY 5m` | `time_bucket()` does not exist. SAMPLE BY is QuestDB's time aggregation. |
-| `date_trunc('hour', ts)` | `timestamp_floor('1h', ts)` or `SAMPLE BY 1h` | `date_trunc()` exists but prefer `timestamp_floor()` (accepts interval literals like `'1h'` instead of unit strings) or `SAMPLE BY` for time-bucketed aggregation. |
-| `generate_series(1, 1000)` for time ranges | Use TICK syntax: `WHERE ts IN '$today - 5bd..$today'` | `generate_series()` exists but prefer TICK bracket expansion for time intervals - it generates optimized interval scans. `generate_series` is fine for non-temporal integer sequences. |
-| `SELECT DISTINCT ON (symbol) ...` | `SELECT * FROM t LATEST ON ts PARTITION BY symbol` | `DISTINCT ON` does not exist. LATEST ON is purpose-built and much faster. |
-| `... HAVING avg(price) > 100` | CTE + `WHERE` on outer query | `HAVING` does not exist. Wrap in CTE/subquery, filter outside. |
-| `... QUALIFY row_number() OVER (...) = 1` | CTE + `WHERE` on outer query | `QUALIFY` does not exist. Filter window results via CTE. |
-| `INTERVAL '1 hour'` | `'1h'` or use `dateadd('h', 1, ts)` | PostgreSQL interval literals are not supported. |
-| `ts >= NOW() - INTERVAL '1 day'` | `WHERE ts IN '$now - 1d..$now'` | Use TICK syntax for time ranges. |
-| `BETWEEN '2025-01-01' AND '2025-01-31'` | `WHERE ts IN '[2025-01]'` | TICK is preferred. Use imprecise month-level dates instead of `[01..31]` bracket ranges. BETWEEN works but TICK is more expressive. |
-| `ORDER BY ts ASC NULLS LAST` | `ORDER BY ts ASC` | `NULLS FIRST/LAST` is not supported. |
-| `STRING` or `TEXT` | `VARCHAR` or `SYMBOL` | Use `VARCHAR` for unique strings, `SYMBOL` for repeated low-cardinality strings. |
-| `BOOLEAN` column type | `BOOLEAN` exists but use with care | Supported, but prefer `SYMBOL` for filterable flag columns in high-volume tables. |
-| `ALTER TABLE ... ADD CONSTRAINT` | Not supported | QuestDB has no constraints, foreign keys, or unique indexes. Use DEDUP for uniqueness. |
-| `CREATE INDEX ON ...` | Not needed | QuestDB auto-indexes designated timestamp and SYMBOL columns. No manual index creation. |
-| `UPSERT` / `ON CONFLICT` | `DEDUP UPSERT KEYS(...)` on CREATE TABLE | Dedup is declared at table creation, not at query time. |
+| `GROUP BY time_bucket('5m', ts)` | `SAMPLE BY 5m` | `time_bucket()` does not exist. |
+| `date_trunc('hour', ts)` in a GROUP BY | `SAMPLE BY 1h`, or `timestamp_floor('1h', ts)` | `date_trunc` exists, but SAMPLE BY is the time-bucketing primitive. |
+| `SELECT DISTINCT ON (symbol) ...` | `... LATEST ON ts PARTITION BY symbol` | `DISTINCT ON` does not exist. For other orderings use `row_number()` in a CTE. |
+| `... HAVING avg(price) > 100` | Subquery or CTE, then `WHERE` | `HAVING` does not exist. |
+| `... QUALIFY row_number() OVER (...) = 1` | CTE, then `WHERE rn = 1` | `QUALIFY` does not exist. |
+| `INTERVAL '1 hour'`, `now() - INTERVAL '1 day'` | TICK `'$now-1d..$now'`, or `dateadd('d', -1, now())` | No PostgreSQL interval literals. |
+| `ORDER BY ts NULLS LAST` | `ORDER BY ts` | `NULLS FIRST/LAST` is not supported. |
+| `OFFSET 10 LIMIT 20` | `LIMIT 10, 30` | `LIMIT lo, hi`. `LIMIT -10` gives the last 10 rows. |
+| `SELECT ... FROM generate_series(...)` for time slots | TICK lists or `SAMPLE BY ... FROM ... TO ... FILL(...)` | Use QuestDB's interval and fill features for time grids. `generate_series()` is fine in `FROM` for integer sequences. |
+| Correlated subquery in `WHERE` / `EXISTS` | `LATERAL JOIN`, `ASOF JOIN`, or a window function | Correlated subqueries are not supported. |
+| `col IN (SELECT ...)` where `col` is not a SYMBOL | `JOIN (SELECT DISTINCT col FROM ...) d ON t.col = d.col`; for NOT IN, `LEFT JOIN` the same and `WHERE d.col IS NULL` | `IN (subquery)` works only on a SYMBOL column. VARCHAR and UUID fail with `constant expected`; LONG, DOUBLE and TIMESTAMP with `cannot compare ... with type CURSOR`. |
+| `SELECT book, count_distinct(px) ... GROUP BY book` with a DOUBLE `px` | `count_distinct(px::varchar)`, or `SELECT book, count() FROM (SELECT DISTINCT book, px FROM t) GROUP BY book` | Keyed `count_distinct` has no DOUBLE, FLOAT, DECIMAL or BOOLEAN variant. Without keys it works. |
+| `... HORIZON JOIN q ... AS h JOIN dim d ON ...` (any other join before or after) | HORIZON in a CTE grouped by the key, then `JOIN dim` on the CTE | `only horizon joins can follow a horizon join` / `horizon join cannot be combined with other joins`. |
+| `FROM (SELECT ... FROM t JOIN dim ...) x HORIZON JOIN ...` | Single-table left side (filters, projections, computed columns are fine); join the dimension after aggregating | `left-hand side of HORIZON JOIN can only be a table with an optional filter`. The right side has the same rule. |
+| `SELECT avg(x) AS m, stddev_samp(x) AS sd, m / sd FROM ...` | `WITH a AS (SELECT avg(x) AS m, stddev_samp(x) AS sd FROM ...) SELECT m, sd, m / sd FROM a` | An aggregate's alias cannot be reused in the same SELECT (`Invalid column: m`). Aliases of plain expressions can: `SELECT px * 2 AS d, d + 1`. |
+| `FROM tables() t CROSS JOIN table_columns(t.table_name)` | `SELECT table_name, column_name, data_type FROM information_schema.columns` | `table_columns()` needs a constant name. `information_schema` reports PostgreSQL types (SYMBOL shows as `character varying`); use `table_columns('t')` per table when the QuestDB type matters. |
+| `ntile(4) OVER (PARTITION BY c ORDER BY abs(qty))` | `SELECT abs(qty) AS aq, ntile(4) OVER (PARTITION BY c ORDER BY aq)` | Window `ORDER BY` takes columns or aliases, not expressions (`Invalid column: abs`). `PARTITION BY` accepts expressions. |
+| `WITH f AS (SELECT ...) timestamp(ts)` | `WITH f AS ((SELECT ... ORDER BY ts) timestamp(ts))` | `timestamp()` goes inside the CTE body, on a parenthesised ordered subquery. |
+| `CASE WHEN uuid_col IS NULL ...`, `CASE WHEN uuid_col = '...' ...` | `CASE WHEN uuid_col IS NOT NULL THEN 0 ELSE 1 END`, `sum((uuid_col IS NULL)::int)`, `count() - count(uuid_col)`, or `uuid_col::varchar = '...'` | `IS NULL` and `=` on UUID or LONG256 inside CASE fail with `type UUID is not supported in 'switch'`. `IS NOT NULL` and `!=` work. |
+| `UNPIVOT (...)` | `UNION ALL` | No UNPIVOT keyword. PIVOT exists. |
+| `DELETE FROM t WHERE ...` | `ALTER TABLE t DROP PARTITION ...`, TTL, or DEDUP corrections | No row-level DELETE. |
+| `STRING` or `TEXT` | `VARCHAR` (unique) or `SYMBOL` (repeated) | `STRING` is legacy. |
+| `ADD CONSTRAINT`, `PRIMARY KEY`, `FOREIGN KEY`, `NOT NULL` | DEDUP keys for uniqueness | No constraints. |
+| `CREATE INDEX ON t(col)` | `ALTER TABLE t ALTER COLUMN col ADD INDEX [TYPE POSTING INCLUDE (...)]` | No CREATE INDEX. SYMBOL columns are not indexed by default; index only selective filters. |
+| `INSERT ... ON CONFLICT DO UPDATE` | `DEDUP UPSERT KEYS(ts, ...)` on the table | Declared on the table, not per insert. |
+| `INSERT ... ON CONFLICT DO NOTHING` | `DEDUP SKIP KEYS(ts, ...)` (10.2+) | First write wins. |
+| `?` placeholders | `$1`, `$2` | The server does not accept `?`. |
 
-## SAMPLE BY Mistakes
+## Time Filters (TICK)
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `SAMPLE BY '5 minutes'` | `SAMPLE BY 5m` | Units are single-letter suffixes: `s`, `m`, `h`, `d`, `M`, `y`. No quotes, no spelled-out words. |
-| `SAMPLE BY 5m` without designated timestamp | Add `TIMESTAMP(col)` to CREATE TABLE | SAMPLE BY requires a designated timestamp on the table. |
-| `SAMPLE BY 5m FILL(PREV) ALIGN TO CALENDAR` | `SAMPLE BY 5m FILL(PREV)` | FILL goes at the end, after SAMPLE BY (and after ALIGN TO CALENDAR if explicitly used). |
-| `SELECT non_agg_col ... SAMPLE BY` without it being the timestamp | Aggregate or remove the column | Non-aggregated, non-timestamp columns in SAMPLE BY cause errors. Only the designated timestamp and aggregated expressions are valid. |
-| Window functions + SAMPLE BY in same SELECT | Subquery: SAMPLE BY inside, window outside | Cannot mix window functions and SAMPLE BY at the same query level. |
+| `WHERE ts >= dateadd('h', -1, now())` | `WHERE ts IN '$now-1h..$now'` | TICK is preferred: shorter, compiles to interval scans. |
+| `WHERE ts BETWEEN '2025-01-01' AND '2025-01-31'` | `WHERE ts IN '[2025-01]'` | Month and year dates expand to every day. |
+| `'2025-01-[01..31]'` | `'[2025-01]'` | Imprecise dates replace day ranges. |
+| `WHERE ts = '$today'` | `WHERE ts IN '$today'` | TICK needs `IN`. |
+| `WHERE ts IN $now - 1h` | `WHERE ts IN '$now-1h..$now'` | Quote it; a range needs `..`. |
+| `'$now - 1 hour'`, `'$now - 5 business days'` | `'$now-1h'`, `'$now-5bd..$now'` | Single-letter units; `bd` = business days. |
+| `WHERE ts IN '$now'` | `'$now-5m..$now'` or `'$now;5m'` | `$now` alone matches one microsecond. |
+| `'$now-@lookback..$now'` | `@w := '$now-1h..$now'` then `IN @w`, or `IN interval(dateadd(...), @asof)` | Variables are not substituted inside a string. Store the whole TICK string, or use `interval()` for computed bounds. |
+| `"query=... '$now-1h..$now'"` in a double-quoted shell string | Escape: `'\$now-1h..\$now'` | The shell expands `$now` to an empty string. |
+| `'2025-01-10..2025-01-12'`, `'2025-01-10T00:00..2025-01-12T00:00'` | `'2025-01-[10..11]'`, `'2025-01-10;2d'`, `'[2025-01-10, 2025-01-11]'`, `interval('2025-01-10', '2025-01-12')` | `..` only works between `$` variables. Mixing a variable and a date fails too. |
+| `'$today-2d..$today'` for "the last two days" | `'$today-2d..$yesterday'` | A day end bound includes the whole day, so the first form is three days. |
+| `100ms` (TICK, SAMPLE BY, HORIZON, TOLERANCE) | `100T` | No `ms` unit; `T` is milliseconds. |
+| `'$now-100U..$now'` | `'$now-100u..$now'` | TICK microseconds are lowercase `u`. `U` raises no error and breaks the bound it is on: here the start becomes the beginning of the table. SAMPLE BY, HORIZON and TOLERANCE are the opposite: `U`, and they reject `u`. |
 
-## Materialized View Mistakes
+## SAMPLE BY
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `CREATE MATERIALIZED VIEW ... AS (...) REFRESH EVERY 5m` | `CREATE MATERIALIZED VIEW ... REFRESH EVERY 5m AS (...)` | REFRESH clause goes BEFORE AS, not after. |
-| `INSERT INTO mat_view ...` | Insert into the BASE table | Never write directly to a materialized view. It refreshes from its source automatically. |
-| `DROP TABLE mat_view` | `DROP MATERIALIZED VIEW mat_view` | Materialized views have their own DROP syntax. |
-| `WITH BASE` on single-table views | Remove `WITH BASE` | WITH BASE is only needed for JOINs — it tells QuestDB which table triggers refresh. |
-| Expecting cascading views to rebuild on backfill | Cascade from base → fine → coarse | Views only refresh on new inserts to the immediate source. Plan the cascade direction accordingly. |
+| `SAMPLE BY 5m ALIGN TO CALENDAR` | `SAMPLE BY 5m` | Calendar alignment is the default since 7.4. Write ALIGN only with `TIME ZONE` or `WITH OFFSET`. |
+| `SAMPLE BY '5 minutes'`, `SAMPLE BY 5 m` | `SAMPLE BY 5m` (or `SAMPLE BY m`) | Unit suffix, no quotes, no space. |
+| `SAMPLE BY 5m ALIGN TO CALENDAR FILL(PREV)` | `SAMPLE BY 5m FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/London'` | FILL comes before ALIGN. |
+| `GROUP BY symbol` next to SAMPLE BY | Just select `symbol` | Non-aggregated columns are keys automatically. |
+| Window function in the same SELECT as SAMPLE BY | SAMPLE BY in a CTE, window outside | Cannot mix at one level. |
+| `FILL(LINEAR)` on a keyed query | `FILL(PREV)` / `FILL(NULL)` | LINEAR is not supported with keys. |
+| Expecting local-time output from `TIME ZONE` | `to_timezone(ts, 'tz')` on the result | Output timestamps are UTC. |
 
-## Window Function Mistakes
+## Materialized and Live Views
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `WHERE row_num = 1` in same query as `ROW_NUMBER() OVER (...) AS row_num` | CTE: compute window in inner query, filter in outer | Cannot filter on window function results in the same query level. |
-| `GROUP BY symbol` + `avg(...) OVER (...)` in same SELECT | Subquery: GROUP BY inside, window outside | Cannot mix GROUP BY/SAMPLE BY with window functions at same level. |
-| Manual EMA: `price * 2/(n+1) + prev * (1 - 2/(n+1))` | `avg(price, 'period', 20) OVER (...)` | QuestDB has native EMA. Don't implement manually. |
-| `avg(computed_col, 'period', N) OVER (...)` on a CTE column | `AVG(computed_col) OVER (ORDER BY ts ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW)` | EMA (`avg` with `'period'`) may fail on computed/CTE columns. Use SMA with explicit ROWS BETWEEN as fallback. |
-| `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` for running total | `sum(col) OVER (ORDER BY ts CUMULATIVE)` | QuestDB has a `CUMULATIVE` shorthand. Either syntax works, but CUMULATIVE is cleaner. |
-| `SELECT ts AS time, ... OVER (ORDER BY ts ...)` | Put all OVER() in CTEs where `ts` is unaliased. Final SELECT only does `ts AS time` with no OVER. | Once `ts` is aliased as `time`, OVER in the same SELECT cannot reference `ts`. Move window functions to CTEs. |
+| `CREATE MATERIALIZED VIEW v AS (...) REFRESH EVERY 5m` | `CREATE MATERIALIZED VIEW v REFRESH EVERY 5m AS (...)` | REFRESH goes before AS. |
+| `ALTER MATERIALIZED VIEW v INVALIDATE` | `REFRESH MATERIALIZED VIEW v FULL` | There is no INVALIDATE command. |
+| Assuming no WHERE or JOIN is allowed | WHERE and JOIN (with `WITH BASE`) work in aggregating views | Old restriction. |
+| `LIMIT` or `row_number() OVER (...) + 1` on the base table in a view (10.2+) | Remove it, or move it to the query that reads the view | Rejected since 10.2.0. |
+| A mat view only to copy filtered rows, with a fake `SAMPLE BY` | Passthrough view: `AS (SELECT ... FROM t WHERE ...)` without SAMPLE BY | 10.2.0 supports non-aggregating views. |
+| `LATEST ON` view to keep last value per key | `EXPIRE ROWS KEEP LATEST ON ts PARTITION BY key` | LATEST ON is rejected in passthrough views. |
+| `INSERT INTO mat_view` | Insert into the base table | Views refresh from their base. |
+| `DROP TABLE mat_view` | `DROP MATERIALIZED VIEW mat_view` (`DROP LIVE VIEW`, `DROP VIEW`) | Each kind has its own DROP. |
+| `WITH BASE` on a single-table view | Remove it | Only needed with JOINs. |
+| `STORAGE POLICY` on a materialized view | `TTL` on the view | Policies apply to tables only. |
+| `stddev()` over a bounded frame in a live view | `sqrt(greatest(avg(x*x) OVER w - avg(x) OVER w * avg(x) OVER w, 0))` | Live views support stddev only in anchored windows. |
+| `SELECT *` or a timestamp `WHERE` in a live view | Project columns explicitly; filter when reading the view | Rejected in live view definitions. |
 
-## TICK Syntax Mistakes
+## Window Functions
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `WHERE ts >= dateadd('h', -1, now())` | `WHERE ts IN '$now - 1h..$now'` | TICK is preferred for time ranges. More readable and optimized. |
-| `WHERE ts IN '$now - 1 hour'` | `WHERE ts IN '$now - 1h'` | TICK units are single-letter: `h` not `hour`. |
-| `WHERE ts IN $now - 1h` (no quotes) | `WHERE ts IN '$now - 1h..$now'` | TICK expressions must be in single quotes. Range requires `..` between start and end. |
-| `WHERE ts = '$today'` | `WHERE ts IN '$today'` | Use `IN` not `=` for TICK expressions. |
-| `WHERE ts IN '$now - 5 business days'` | `WHERE ts IN '$now - 5bd..$now'` | Business days use `bd` suffix. |
+| `WHERE rn = 1` next to `row_number() OVER (...) AS rn` | CTE, filter outside | Cannot filter window results at the same level. |
+| Manual EMA recurrence | `avg(price, 'period', 20) OVER (ORDER BY ts)` | Native EMA. Also `'alpha'` and time constants. |
+| `avg(x, 'period', 20) OVER (ORDER BY ts ROWS ...)` | Drop the frame | EMA and VWEMA reject ROWS/RANGE clauses. |
+| `sqrt(avg(x*x) - avg(x)^2)` workaround for Bollinger in queries | `stddev_samp(x) OVER (... ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)` | Windowed stddev works in queries (not in live views). |
+| `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` | `OVER (ORDER BY ts CUMULATIVE)` | Shorthand; both work. |
+| `SELECT ts AS time, avg(x) OVER (ORDER BY ts)` | Window in a CTE, alias `ts AS time` outside | After aliasing, `ts` is not visible to OVER. |
 
-## Array Mistakes
+## Arrays
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `bids[0]` | `bids[1]` | QuestDB arrays are **1-indexed**. `[1]` is the first element. |
-| `bids[0][0]` for best bid price | `bids[1][1]` | 2D: `bids[1]` = prices array, `bids[2]` = sizes array. `bids[1][1]` = best bid price. |
-| Python: `columns={'bids': [[41999.0], [2.1]]}` | `columns={'bids': [np.array([41999.0], dtype=np.float64), np.array([2.1], dtype=np.float64)]}` | ILP client requires numpy arrays with explicit `np.float64` dtype, not Python lists. |
-| `DOUBLE[]` for order book | `DOUBLE[][]` (2D) | Use 2D arrays: dimension 1 = prices, dimension 2 = sizes. |
+| `bids[0]`, `bids[0][0]` | `bids[1]`, `bids[1][1]` | 1-indexed. `bids[1]` prices, `bids[2]` sizes, `bids[1][1]` best bid. |
+| Four 1D arrays for a book | `bids DOUBLE[][]`, `asks DOUBLE[][]` | One 2D array per side. |
+| Python lists for array columns | `np.array(..., dtype=np.float64)`, shape `(2, N)` | Only float64 numpy arrays are accepted. |
 
-## Ingestion Mistakes
+## Ingestion and Clients
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `INSERT INTO trades VALUES (...)` for streaming | Use ILP client (`questdb.ingress.Sender`) | INSERT is slow for streaming. ILP is 10-100x faster and supports batching. |
-| `Sender.from_conf(conf)` then immediately `.row(...)` | Use `with Sender.from_conf(conf) as sender:` | `from_conf()` does not connect. The context manager (or `.establish()`) opens the connection. |
-| `sender.row(... symbols={'price': 42000})` | `columns={'price': 42000.0}` | `symbols={}` is for SYMBOL type columns only (strings). Numeric values go in `columns={}`. |
-| HTTP POST to `/exec` for queries | HTTP GET to `/exec?query=...` | The exec endpoint only accepts GET requests. |
-| `import psycopg2` | `import psycopg as pg` | Use `psycopg` (v3), not `psycopg2`. |
-| `dbname='questdb'` in PG connection | `dbname='qdb'` | QuestDB's database name is `qdb`, not `questdb`. |
-| `sender.flush()` after every row | Batch rows, flush periodically | Flushing per-row kills throughput. Flush every N rows or on a timer. |
-| TCP without `protocol_version=2` when using arrays | `tcp::addr=...;protocol_version=2;` | Array support requires protocol version 2. |
+| `from questdb.ingress import Sender` with `tcp::addr=...:9009` for new code | `questdb.connect("ws::addr=localhost:9000;")` and `db.sender()` | QWP is the native protocol since 10.0; ILP is a compatibility protocol. |
+| `questdb.connect("http::...")` | `ws::` / `wss::` | `connect()` only accepts QWP strings. |
+| `protocol_version=2` in a `ws::` string | Omit it | QWP negotiates its version. |
+| `wss::` assuming port 443 | `wss::addr=host:9000;` (or the real port) | Both schemes default to 9000. |
+| A new connection per row or per callback | One handle per process, long-lived sender lease | Connections are pooled and expensive to open. |
+| `sender.flush()` after every row | Rely on auto-flush (1,000 rows / 100 ms) or flush per batch | Per-row flushes kill throughput. |
+| Assuming `flush()` means stored | `flush(wait=True)`; then `wait_wal_table('t')` before reading | Flush returns before the ack; reads see rows after WAL apply. |
+| `TimestampNanos.now()` for events you may replay | The event's own timestamp, plus DEDUP keys | Server-side times change on replay and create duplicates. |
+| `INSERT INTO ... VALUES` in a loop for streams | QWP sender | INSERT is for small volumes. |
+| HTTP POST to `/exec` | `GET /api/v1/sql/execute?query=...` | GET only; `/exec` is the deprecated name. |
+| Hand-encoding `()` in curl URLs | `curl -G --data-urlencode "query=..."` | Encodes everything correctly. |
+| `import psycopg2`, `dbname=questdb` | `import psycopg`, `dbname=qdb` | psycopg v3; database name is ignored, `qdb` by convention. |
+| Multi-host failover on open source | Enterprise only; OSS is single-node | Failover needs replication. |
 
-## Grafana Mistakes
+## Schema Design
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `WHERE ts >= $__from AND ts <= $__to` | `WHERE $__timeFilter(ts)` | Use the QuestDB datasource macro. It handles the time range correctly. |
-| `SAMPLE BY 1m` (hardcoded) with Grafana | `SAMPLE BY $__interval` | Let Grafana auto-calculate the interval based on the visible time range and panel width. |
-| PostgreSQL datasource for QuestDB | QuestDB datasource plugin (`questdb-questdb-datasource`) | The QuestDB plugin has optimized macros and better compatibility. |
-| `datasource: 'QuestDB'` (by name) in provisioned dashboards | `datasource: { uid: 'questdb-ds-uid', type: 'questdb-questdb-datasource' }` | Always reference datasources by UID and type, not display name. |
-| `"format": "table"` or `"format": "time_series"` (string) in panel targets | `"format": 1` (integer) | QuestDB Grafana plugin uses Go integer enum `sqlutil.FormatQueryOption`. Strings cause unmarshal error. Grafana JSON export shows string but API POST requires integer. |
+| `VARCHAR` for tickers, venues, sides | `SYMBOL` | Dictionary-encoded, fast to filter and group. |
+| Table without `TIMESTAMP(col)` | Always designate a timestamp | Needed for SAMPLE BY, LATEST ON, joins, TTL, DEDUP. |
+| `... PARTITION BY DAY WAL` | `... PARTITION BY DAY` | WAL is the default for partitioned tables. |
+| No `PARTITION BY` | Pick by volume (30-80M rows per partition) | Unpartitioned tables are not WAL and cannot use TTL. |
+| `SYMBOL CAPACITY 256` | `SYMBOL` | Capacity is automatic since 9.0. |
+| Separate date and time columns | One `TIMESTAMP` | Time-series features need one designated timestamp. |
+| No DEDUP on tables behind failover or replay | `DEDUP UPSERT KEYS(ts, ...)` or `SKIP KEYS` | At-least-once delivery creates duplicates otherwise. |
+| `TTL` on Enterprise tables | `STORAGE POLICY(TO PARQUET 7d, DROP LOCAL 1M)` | Enterprise translates TTL to a policy and rejects `ALTER TABLE SET TTL`. |
+| ZFS for compression | Parquet partitions (`FORMAT PARQUET`, `CONVERT PARTITION`, or a storage policy) | The recommended way to compress data. |
 
-## Schema Design Mistakes
+## Web Console Dashboards (MCP)
 
-| ❌ Don't | ✅ Do Instead | Why |
+| Don't | Do instead | Why |
 |---|---|---|
-| `VARCHAR` for ticker symbols | `SYMBOL` | SYMBOL is indexed and optimized for repeated low-cardinality strings. VARCHAR is not indexed. |
-| Table without `TIMESTAMP(col)` | Always designate a timestamp column | Without it, you cannot use SAMPLE BY, LATEST ON, or ASOF JOIN. |
-| Table without `WAL` | Add `WAL` to CREATE TABLE | WAL enables concurrent writes. Without it, only one writer is allowed. |
-| Table without `PARTITION BY` | Add `PARTITION BY DAY` (or appropriate granularity) | Unpartitioned tables cannot use TTL and have worse query performance on large datasets. |
-| Separate `date` and `time` columns | Single `TIMESTAMP` column | QuestDB is optimized for a single designated timestamp. Split date/time prevents using time-series features. |
-
-## Enterprise Auth Mistakes
-
-| ❌ Don't | ✅ Do Instead | Why |
-|---|---|---|
-| Skip auth setup on Enterprise | Create user/service account + grants + tokens | Enterprise requires explicit auth. No anonymous access. |
-| `GRANT INSERT` to a user who creates their own tables | Skip it — creator auto-gets all permissions | Creating a table automatically grants full permissions on it to the creator. |
-| `http::` with a REST token on Enterprise | `https::` (note the `s`) | Enterprise with tokens requires TLS. Use `https::` for HTTP, `tcps::` for TCP. |
-| `tcp::` with JWK tokens on Enterprise | `tcps::` (note the `s`) | Same — TLS required for authenticated connections. |
-| Use TCP/ILP without error handling | Prefer HTTP ingestion, or add monitoring for TCP | TCP/ILP does not return errors to the client. Data loss happens silently on disconnect. |
-| Hardcode tokens in source code | Use environment variables or secrets manager | Tokens are sensitive credentials. Pass via `QDB_TOKEN`, `QDB_ILP_USER`, etc. |
-| Pass REST token params to ILP config | REST uses `token=`. ILP uses `username=`, `token=` (private key), `token_x=`, `token_y=`. | REST and JWK tokens have completely different connection string parameters. |
-| Forget `protocol_version=2` with `tcps::` | Always include `protocol_version=2;` in TCP config | Required for array support and modern protocol features, regardless of auth. |
-| `tls_verify=unsafe_off` in production without asking | Ask the user if the server uses a self-signed certificate | Only disable TLS verification for self-signed certs. Never add silently for production. |
-| Omit `tls_verify=unsafe_off` with self-signed certs | Add `tls_verify=unsafe_off;` to the connection string | Without it, the client will reject the self-signed certificate and fail to connect. |
-
-## Grafana Dashboard Mistakes
-
-| ❌ Don't | ✅ Do Instead | Why |
-|---|---|---|
-| Duplicate candlestick panels for the same data | Overlay VWAP + Bollinger on the candlestick panel via multiple refIDs with `includeAllFields: true`. RSI and spread go in their own panels. | One candlestick panel with overlays, separate panels only for different chart types (oscillators, spread). |
-| Use `stddev_samp()` in window functions | Compute manually: `sqrt(avg(x*x) - avg(x)^2)` | `stddev_samp` may not work inside window frames. Manual variance is more compatible. |
-| Use a single time range for all panels | Use per-panel `timeFrom` overrides (e.g. `"1m"`, `"30m"`, `"now/d"`) | Different panels need different ranges: real-time tables need seconds, indicators need hours. |
-| Forget `hideTimeOverride: true` on panels with `timeFrom` | Always set `hideTimeOverride: true` | Otherwise Grafana shows an ugly time override label in the panel title. |
-| Create one panel per symbol manually | Use `repeat: "SYMBOL"` on panels or rows with `repeatDirection: "h"` | Auto-duplicates per symbol. Much cleaner and scales with symbol count. |
-| `SELECT DISTINCT symbol FROM trades` on tables with millions of stale symbols | `LATEST ON` to get only symbols with recent data | For fresh pipelines, `DISTINCT` is fine. Switch to `LATEST ON` only when stale symbols clutter the dropdown. |
-| Reference datasource by name | Always use UID and type: `{"uid": "...", "type": "questdb-questdb-datasource"}` | Names can change. UIDs are stable. |
-| Assume all indicators share the same Y-axis | Use `byFrameRefID` overrides to give RSI its own axis and unit | RSI is 0-100, price is in dollars. They need separate axes. |
-
+| Grafana by default | Web Console notebook via the MCP server | No extra service; Grafana only on request. |
+| Calling tools before pairing, or pairing without showing `userMessage` | `get_pairing_credentials`, show `userMessage` verbatim, then `wait_for_pairing` | The user needs the link or token. |
+| Many `add_cell` + `set_cell_*` calls for a new dashboard | One `apply_notebook_state` | Atomic and much faster. |
+| Omitting existing cells or `chart_config` in `apply_notebook_state` | Send every cell; `preserve_value: true` for untouched SQL; re-send chart configs | It is a full PUT: omissions delete. |
+| `chart_config.queries` shorter than the statement count | One entry per `;` statement | Rejected otherwise. |
+| Candlestick without `ohlc` | `ohlc: {open, high, low, close}` | Required. |
+| No refresh setting on a live dashboard | `auto_refresh_default` and per-cell `auto_refresh` | Nothing polls until set. |
+| DDL in dashboard cells | Create tables and views separately | DDL cells never auto-run or refresh. |
+| Volume bars on the price axis | Second query on `axis: "right"` with `right_axis` max pinned (e.g. 0..4 for 0..1 values), or the candlestick `volume` column | Keeps candles readable. |
+| `activate_notebook` right after creating | Tell the user, switch only if they agree | The user decides when to change tabs. |
