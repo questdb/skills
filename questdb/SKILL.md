@@ -81,6 +81,8 @@ Working style:
    - A HORIZON JOIN cannot be combined with other joins, and each side must
      be a single table. Join dimension tables after aggregating.
    - Keyed `count_distinct()` rejects DOUBLE: `count_distinct(px::varchar)`.
+   - An aggregate's alias cannot be reused in the same SELECT
+     (`avg(x) AS m, m * 2` fails): aggregate in a CTE, compute outside.
    - `CASE WHEN uuid_col IS NULL` fails: `CASE WHEN uuid_col IS NOT NULL
      THEN 0 ELSE 1 END`.
    - TICK `..` works only between `$` variables, not literal dates. There is

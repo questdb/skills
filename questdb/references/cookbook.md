@@ -15,6 +15,12 @@ names to the user's schema (see the mapping in `indicators.md`).
 
 When asked to find issues, anomalies or patterns without a specific question:
 
+0. Go wide before going deep. Every table, including reference, master and
+   configuration data (marks, instruments, limits, fees), gets a profile and
+   a sanity check against the data it describes before any one method takes
+   over the run. Use the full time range the data covers for every finding,
+   and state the window in the report; narrow it only when a question needs
+   it.
 1. Profile first: list every table's columns with
    `SELECT table_name, column_name, data_type FROM information_schema.columns`,
    then row counts, time span, gaps, nulls (`count() - count(col)`),
@@ -31,8 +37,9 @@ When asked to find issues, anomalies or patterns without a specific question:
    average of a mix. When single values of a key are too sparse to show
    anything, group them by a derived attribute (a name prefix or pattern, a
    lookup table, size or activity tiers): the grouping that matters may not
-   be a column. Split a group further only while each cell keeps enough rows
-   to judge. If a finer split leaves cells too small, report the coarser
+   be a column. Start from the coarsest grouping that shows the effect, and
+   split further only to explain it, while each cell keeps enough rows to
+   judge. If a finer split leaves cells too small, report the coarser
    group's result rather than dropping it.
 4. Match time scales to the data. Derive horizons and bucket sizes from the
    gaps between events and how long orders or positions live, and compare
@@ -87,7 +94,8 @@ Conventions the recipes share:
   markets). `RANGE` for a curve, `LIST` for key points.
 - Report `count()` per cell and a t-statistic,
   `markout_bps / (stddev_samp(markout) / sqrt(n))`, before calling a
-  segment good or bad. A segment that looks bad but is not significant is a
+  segment good or bad. Compute the aggregates in a CTE and the ratio in the
+  outer query: an aggregate's alias cannot be reused in the same SELECT. A segment that looks bad but is not significant is a
   hypothesis to report with its `n`, not a result to drop (see step 7 of
   Analysing a Dataset).
 - Separate the segment from the market: compare its markout with all trades in
