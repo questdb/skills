@@ -2,7 +2,9 @@
 
 Teaches coding agents (Claude Code, Codex and others) to write correct QuestDB
 SQL and client code, and to build live dashboards in the QuestDB Web Console.
-Covers QuestDB 10.2 and QuestDB Enterprise 4.2.
+Last updated for QuestDB 10.2 and QuestDB Enterprise 4.2. See the
+[release notes](https://questdb.com/release-notes/) and the
+[docs changelog](https://questdb.com/docs/changelog/) for later changes.
 
 ## Installation
 

@@ -16,7 +16,10 @@ description: >
 
 # QuestDB Skill
 
-Current release: QuestDB 10.2 (open source) and QuestDB Enterprise 4.2.
+Last updated for QuestDB 10.2 (open source) and QuestDB Enterprise 4.2. For
+features added in later releases, check the
+[release notes](https://questdb.com/release-notes/) and the
+[docs changelog](https://questdb.com/docs/changelog.md).
 
 ## How to Use This Skill
 
