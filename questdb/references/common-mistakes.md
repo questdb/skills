@@ -18,6 +18,8 @@ behaved differently. Read this before writing novel QuestDB SQL.
 | `OFFSET 10 LIMIT 20` | `LIMIT 10, 30` | `LIMIT lo, hi`. `LIMIT -10` gives the last 10 rows. |
 | `SELECT ... FROM generate_series(...)` for time slots | TICK lists or `SAMPLE BY ... FROM ... TO ... FILL(...)` | Use QuestDB's interval and fill features for time grids. `generate_series()` is fine in `FROM` for integer sequences. |
 | Correlated subquery in `WHERE` / `EXISTS` | `LATERAL JOIN`, `ASOF JOIN`, or a window function | Correlated subqueries are not supported. |
+| `col IN (SELECT ...)` where `col` is not a SYMBOL | `JOIN (SELECT DISTINCT col FROM ...) d ON t.col = d.col`; for NOT IN, `LEFT JOIN` the same and `WHERE d.col IS NULL` | `IN (subquery)` works only on a SYMBOL column. VARCHAR and UUID fail with `constant expected`; LONG, DOUBLE and TIMESTAMP with `cannot compare ... with type CURSOR`. |
+| `CASE WHEN uuid_col IS NULL ...`, `CASE WHEN uuid_col = '...' ...` | `CASE WHEN uuid_col IS NOT NULL THEN 0 ELSE 1 END`, `sum((uuid_col IS NULL)::int)`, `count() - count(uuid_col)`, or `uuid_col::varchar = '...'` | `IS NULL` and `=` on UUID or LONG256 inside CASE fail with `type UUID is not supported in 'switch'`. `IS NOT NULL` and `!=` work. |
 | `UNPIVOT (...)` | `UNION ALL` | No UNPIVOT keyword. PIVOT exists. |
 | `DELETE FROM t WHERE ...` | `ALTER TABLE t DROP PARTITION ...`, TTL, or DEDUP corrections | No row-level DELETE. |
 | `STRING` or `TEXT` | `VARCHAR` (unique) or `SYMBOL` (repeated) | `STRING` is legacy. |
@@ -40,6 +42,10 @@ behaved differently. Read this before writing novel QuestDB SQL.
 | `WHERE ts IN '$now'` | `'$now-5m..$now'` or `'$now;5m'` | `$now` alone matches one microsecond. |
 | `'$now-@lookback..$now'` | `@w := '$now-1h..$now'` then `IN @w`, or `IN interval(dateadd(...), @asof)` | Variables are not substituted inside a string. Store the whole TICK string, or use `interval()` for computed bounds. |
 | `"query=... '$now-1h..$now'"` in a double-quoted shell string | Escape: `'\$now-1h..\$now'` | The shell expands `$now` to an empty string. |
+| `'2025-01-10..2025-01-12'`, `'2025-01-10T00:00..2025-01-12T00:00'` | `'2025-01-[10..11]'`, `'2025-01-10;2d'`, `'[2025-01-10, 2025-01-11]'`, `interval('2025-01-10', '2025-01-12')` | `..` only works between `$` variables. Mixing a variable and a date fails too. |
+| `'$today-2d..$today'` for "the last two days" | `'$today-2d..$yesterday'` | A day end bound includes the whole day, so the first form is three days. |
+| `100ms` (TICK, SAMPLE BY, HORIZON, TOLERANCE) | `100T` | No `ms` unit; `T` is milliseconds. |
+| `'$now-100U..$now'` | `'$now-100u..$now'` | TICK microseconds are lowercase `u`. `U` raises no error and breaks the bound it is on: here the start becomes the beginning of the table. SAMPLE BY, HORIZON and TOLERANCE are the opposite: `U`, and they reject `u`. |
 
 ## SAMPLE BY
 

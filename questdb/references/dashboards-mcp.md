@@ -172,6 +172,11 @@ Reference them as `@name`. They are not injected into INSERT/CREATE/ALTER.
 - Order matters: a variable may reference earlier ones.
 - A value list works with `IN`: `{"name": "syms", "value": "('EURUSD','GBPUSD')"}`
   then `WHERE symbol IN @syms`.
+- Never name a CTE or alias after a SQL keyword (`lt`, `asof`, `sample`,
+  `splice`, `horizon`). The console prepends the `DECLARE` only when its own
+  parser accepts the cell, and these names make that parser fail, so the cell
+  runs with no variables and no error (the server itself accepts them). Use
+  names like `fills_lt`, or quote them (`"lt"`).
 
 **Newer consoles** (check the `apply_notebook_state` schema for `kind`,
 `time_range` and `set_cell_time_range`) add:

@@ -11,6 +11,24 @@ curl -s "https://questdb.com/docs/llms.txt"        # every page with its .md URL
 Most recipes run against `demo.questdb.io` tables. Adapt table and column
 names to the user's schema (see the mapping in `indicators.md`).
 
+## Analysing a Dataset
+
+When asked to find issues, anomalies or patterns without a specific question:
+
+1. Profile first: row counts, time span, gaps, nulls (`count() - count(col)`),
+   duplicates per key, and late or restated rows.
+2. Break each metric down by every categorical column in the schema, and by
+   pairs of them. An effect concentrated in one segment can vanish in the
+   average of a mix.
+3. Match time scales to the data. Derive horizons and bucket sizes from the
+   gaps between events and how long orders or positions live, and compare
+   several scales instead of stopping at a default.
+4. Separate common moves from specific ones. Before blaming one entity
+   (counterparty, venue, device, host), check whether the whole population
+   moved at the same time, against a benchmark or its peers.
+5. Report each finding with its size, the rows and period it affects, and the
+   query that shows it.
+
 ## Finance: Post-Trade and Execution Quality (TCA)
 
 All built on `HORIZON JOIN`; use them instead of hand-rolled ASOF self-joins.

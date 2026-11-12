@@ -37,6 +37,7 @@ file only when the task needs it:
 | "Does QuestDB have function X?", signatures, keywords, types | `references/sql-grammar.md` |
 | Indicators (MACD, ATR, Stochastic, Keltner, OBV, drawdown, ...) | `references/indicators.md` |
 | Finance/TCA or time-series recipes (markout, slippage, IS, OFI, FILL patterns, subtotals, ...) | `references/cookbook.md` |
+| Open-ended analysis: find issues, anomalies or patterns in a dataset | `references/cookbook.md` (Analysing a Dataset) |
 | End-to-end crypto feed pipeline (cryptofeed + QuestDB) | `references/crypto-pipeline.md` |
 | Grafana, only when the user asks for it | `references/grafana.md` |
 | Enterprise: auth, tokens, RBAC, replication, failover, cold storage | `references/enterprise.md` |
@@ -160,8 +161,20 @@ WHERE ts IN '[2025-01]#XNYS'                  -- Enterprise: NYSE sessions, holi
 Rules:
 - Use `IN`, never `=`. Always single-quoted.
 - `$now` alone is one microsecond: add a range (`..`) or a duration (`;`).
+- `..` needs a `$` variable on both sides. Between literal dates it fails
+  (`'2025-01-10..2025-01-12'` is an invalid date); use `'2025-01-[10..11]'`,
+  `'2025-01-10;2d'`, `'[2025-01-10, 2025-01-11]'` or
+  `interval('2025-01-10', '2025-01-12')`.
+- A day variable as the end bound includes that whole day:
+  `'$today-2d..$today'` is three days. For two complete days use
+  `'$today-2d..$yesterday'`.
 - Units: `y M w d bd h m s T`(ms) `u`(µs) `n`(ns). Case-sensitive:
-  `M` months, `m` minutes. `bd` only in arithmetic, not durations.
+  `M` months, `m` minutes. `bd` only in arithmetic, not durations. No `ms`:
+  write `100T`.
+- Microseconds are lowercase `u` in TICK but uppercase `U` everywhere else
+  (SAMPLE BY, HORIZON, TOLERANCE, which reject `u`). In TICK, `U` raises no
+  error and gives wrong results: `'$now-100U..$now'` becomes an unbounded
+  scan from the start of the table.
 - Brackets are required for lists and for ranges with suffixes
   (`'[$now-2h..$now]@Europe/London'`).
 - A TICK string can live in a variable:
@@ -274,7 +287,8 @@ ORDER BY o.id, t.qty DESC;
 - Time-series joins need a designated timestamp on both sides.
   `ON (symbol)` when names match, `ON (a.sym = b.sym)` otherwise.
 - **HORIZON** (10.1+): `h.offset` is in the left table's timestamp unit
-  (ns for `TIMESTAMP_NS`); offset units `n U T s m h d`. Without aggregates it
+  (ns for `TIMESTAMP_NS`); offset units `n U T s m h d` (uppercase `U`, no
+  `ms`: `LIST (0, 100T)`). Without aggregates it
   returns one row per left row and offset. Right-side filters go in `ON`
   (`ON (t.symbol = c.symbol AND c.ecn = 'LMAX')`) or
   `(core_price WHERE ...) AS c`. Several HORIZON JOINs can chain; only the
