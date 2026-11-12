@@ -15,7 +15,9 @@ names to the user's schema (see the mapping in `indicators.md`).
 
 When asked to find issues, anomalies or patterns without a specific question:
 
-1. Profile first: row counts, time span, gaps, nulls (`count() - count(col)`),
+1. Profile first: list every table's columns with
+   `SELECT table_name, column_name, data_type FROM information_schema.columns`,
+   then row counts, time span, gaps, nulls (`count() - count(col)`),
    duplicates per key, and late or restated rows.
 2. Look for gaps at a resolution finer than the gap. Per source, measure the
    time between rows (`ts - lag(ts) OVER (PARTITION BY source ORDER BY ts)`,
