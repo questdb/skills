@@ -210,7 +210,9 @@ SAMPLE BY [n]unit
   `LINEAR` not for keyed queries. `FROM ... TO ...` emits empty buckets at the
   edges.
 - Output timestamps are UTC even with `TIME ZONE`; convert with `to_timezone()`.
-- `count_distinct(col)` instead of `COUNT(DISTINCT col)`.
+- `count_distinct(col)` instead of `COUNT(DISTINCT col)`. With keys (SAMPLE
+  BY, GROUP BY, keyed joins) it rejects DOUBLE, FLOAT, DECIMAL and BOOLEAN:
+  use `count_distinct(px::varchar)` or count over a `SELECT DISTINCT`.
 - No `HAVING`: wrap in a subquery and filter with `WHERE`.
 
 ### LATEST ON
@@ -294,6 +296,11 @@ ORDER BY o.id, t.qty DESC;
   `(core_price WHERE ...) AS c`. Several HORIZON JOINs can chain; only the
   last carries `RANGE`/`LIST ... AS`. No SAMPLE BY, window functions or other
   joins at the same level: wrap it.
+- Each side of a HORIZON JOIN must be one table, optionally in a subquery that
+  filters, projects or computes columns. A JOIN inside either side fails
+  (`left-hand side of HORIZON JOIN can only be a table with an optional
+  filter`). To add columns from another table, group the HORIZON by the key
+  in a CTE and join the dimension table to that result.
 - **WINDOW**: units spelled out (`seconds`, `minutes`); bounds can be left
   columns. No GROUP BY or window functions at the same level.
 - **LATERAL**: INNER, LEFT or CROSS only; the subquery can use outer columns,
