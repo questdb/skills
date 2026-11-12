@@ -40,8 +40,14 @@ When asked to find issues, anomalies or patterns without a specific question:
 5. Separate common moves from specific ones. Before blaming one entity
    (counterparty, venue, device, host), check whether the whole population
    moved at the same time, against a benchmark or its peers.
-6. Report each finding with its size, the rows and period it affects, and the
-   query that shows it.
+6. Weigh the evidence. A thin cell first gets more data: widen the time range
+   if history exists, or regroup as in step 3. An effect that holds across
+   days, sides and horizons is stronger than one cell, and with many segments
+   a few look significant by chance.
+7. Report each finding with its size, the rows and period it affects, and the
+   query that shows it. Never drop a signal for being underpowered: list it as
+   a hypothesis with its `n` and t-statistic, and say what data would confirm
+   it. Rank confirmed findings first.
 
 ## Finance: Post-Trade and Execution Quality (TCA)
 
@@ -81,7 +87,9 @@ Conventions the recipes share:
   markets). `RANGE` for a curve, `LIST` for key points.
 - Report `count()` per cell and a t-statistic,
   `markout_bps / (stddev_samp(markout) / sqrt(n))`, before calling a
-  segment good or bad.
+  segment good or bad. A segment that looks bad but is not significant is a
+  hypothesis to report with its `n`, not a result to drop (see step 7 of
+  Analysing a Dataset).
 - Separate the segment from the market: compare its markout with all trades in
   the same symbol and period. A segment only stands out if it differs from
   that benchmark, not because the whole market moved. This last point is
