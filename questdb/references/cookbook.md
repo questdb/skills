@@ -15,12 +15,15 @@ names to the user's schema (see the mapping in `indicators.md`).
 
 When asked to find issues, anomalies or patterns without a specific question:
 
-0. Go wide before going deep. Every table, including reference, master and
-   configuration data (marks, instruments, limits, fees), gets a profile and
-   a sanity check against the data it describes before any one method takes
-   over the run. Use the full time range the data covers for every finding,
-   and state the window in the report; narrow it only when a question needs
-   it.
+0. Go wide before going deep, even when the prompt points at one topic.
+   Profile every table in one query:
+   `SELECT table_name, table_type, designatedTimestamp, table_row_count, table_min_timestamp, table_max_timestamp, dedup FROM tables() ORDER BY table_name`
+   (views show no counts). Then give each table, including reference, master
+   and configuration data (marks, instruments, limits, fees), one sanity check
+   against the data it describes before any single method takes over the
+   run. Keep this pass to a fraction of the queries you expect to run. Use
+   the full time range the data covers for every finding, and state the
+   window in the report; narrow it only when a question needs it.
 1. Profile first: list every table's columns with
    `SELECT table_name, column_name, data_type FROM information_schema.columns`,
    then row counts, time span, gaps, nulls (`count() - count(col)`),
@@ -54,7 +57,9 @@ When asked to find issues, anomalies or patterns without a specific question:
 7. Report each finding with its size, the rows and period it affects, and the
    query that shows it. Never drop a signal for being underpowered: list it as
    a hypothesis with its `n` and t-statistic, and say what data would confirm
-   it. Rank confirmed findings first.
+   it. Rank confirmed findings first. End with a coverage table: every table,
+   what was checked, and the result ("checked, nothing found" counts), so a
+   table that was never examined shows as a gap.
 
 ## Finance: Post-Trade and Execution Quality (TCA)
 
