@@ -174,9 +174,11 @@ Reference them as `@name`. They are not injected into INSERT/CREATE/ALTER.
   then `WHERE symbol IN @syms`.
 - Never name a CTE or alias after a SQL keyword (`lt`, `asof`, `sample`,
   `splice`, `horizon`). The console prepends the `DECLARE` only when its own
-  parser accepts the cell, and these names make that parser fail, so the cell
-  runs with no variables and no error (the server itself accepts them). Use
-  names like `fills_lt`, or quote them (`"lt"`).
+  parser accepts the cell, and these names make that parser fail (the server
+  itself accepts them). The cell then fails with a misleading
+  `Invalid column: @name`, or, if it declares its own default for the
+  variable, silently runs with that default. Use names like `fills_lt`, or
+  quote them (`"lt"`).
 
 **Newer consoles** (check the `apply_notebook_state` schema for `kind`,
 `time_range` and `set_cell_time_range`) add:
