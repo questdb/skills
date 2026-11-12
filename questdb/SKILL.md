@@ -304,8 +304,9 @@ ORDER BY o.id, t.qty DESC;
   (ns for `TIMESTAMP_NS`); offset units `n U T s m h d` (uppercase `U`, no
   `ms`: `LIST (0, 100T)`). Without aggregates it
   returns one row per left row and offset. Right-side filters go in `ON`
-  (`ON (t.symbol = c.symbol AND c.ecn = 'LMAX')`) or
-  `(core_price WHERE ...) AS c`. Several HORIZON JOINs can chain; only the
+  (`ON (t.symbol = c.symbol AND c.ecn = 'LMAX')`), which also works in Web
+  Console notebooks; `(core_price WHERE ...) AS c` works on the server but
+  stops notebook variables from applying. Several HORIZON JOINs can chain; only the
   last carries `RANGE`/`LIST ... AS`. No SAMPLE BY, window functions or other
   joins at the same level: wrap it.
 - Each side of a HORIZON JOIN must be one table, optionally in a subquery that

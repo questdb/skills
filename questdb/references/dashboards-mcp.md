@@ -172,13 +172,17 @@ Reference them as `@name`. They are not injected into INSERT/CREATE/ALTER.
 - Order matters: a variable may reference earlier ones.
 - A value list works with `IN`: `{"name": "syms", "value": "('EURUSD','GBPUSD')"}`
   then `WHERE symbol IN @syms`.
-- Never name a CTE or alias after a SQL keyword (`lt`, `asof`, `sample`,
-  `splice`, `horizon`). The console prepends the `DECLARE` only when its own
-  parser accepts the cell, and these names make that parser fail (the server
-  itself accepts them). The cell then fails with a misleading
-  `Invalid column: @name`, or, if it declares its own default for the
-  variable, silently runs with that default. Use names like `fills_lt`, or
-  quote them (`"lt"`).
+- The console prepends the `DECLARE` only when its own parser accepts the
+  cell. Some SQL the server accepts makes that parser fail, and the cell then
+  fails with a misleading `Invalid column: @name` or, if it declares its own
+  default for the variable, silently runs with that default. In cells that
+  use variables, avoid:
+  - SQL keywords as CTE names, table aliases or column aliases: `lt`, `asof`,
+    `sample`, `splice`, `horizon`, `window`. Use `fills_lt`,
+    `horizon_sec`, or quote them (`"lt"`).
+  - A subquery on the right of a HORIZON JOIN, `(quotes WHERE ...)` or
+    `(SELECT ...)`. Filter the right side in `ON` instead:
+    `ON (t.symbol = q.symbol AND q.source = 'ICE')`.
 
 **Newer consoles** (check the `apply_notebook_state` schema for `kind`,
 `time_range` and `set_cell_time_range`) add:
