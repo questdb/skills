@@ -43,6 +43,69 @@ When asked to find issues, anomalies or patterns without a specific question:
 
 ## Finance: Post-Trade and Execution Quality (TCA)
 
+### Method
+
+Work through the questions in order; each recipe below answers one:
+
+1. **Slippage**: what did I pay? Fill price against mid (includes half the
+   spread) and against top of book (beyond the spread), with the spread at
+   fill time for context.
+2. **Markout**: what happened next? Mid at offsets after each fill.
+3. **Implementation shortfall**: why? Effective spread = permanent impact
+   (mid at a settle horizon minus mid at fill) + temporary impact (the part
+   that reverted).
+4. **Scorecards**: where and with whom? The same metrics by venue,
+   counterparty, passive/aggressive, side, size bucket and hour of day.
+5. **Flow toxicity**: who is informed? VPIN, from volume imbalance rather than
+   price.
+
+Conventions the recipes share:
+- Sign by side so positive markout means the market moved in your favour:
+  `CASE t.side WHEN 'buy' THEN mid - t.price ELSE t.price - mid END`. Offset 0
+  is then minus the slippage against mid.
+- bps relative to the fill price (`/ t.price * 10000`). Report P&L in currency
+  (`signed_diff * t.quantity`) and volume next to every bps figure: a bad
+  markout on little volume may not matter. Volume-weighted bps:
+  `sum(signed_diff * qty) / sum(t.price * qty) * 10000`.
+- Read aggressive fills against the half-spread
+  (`(ask - bid) / mid * 10000 / 2`): a markout near minus the half-spread
+  that recovers is the normal cost of crossing; one that keeps falling is
+  adverse selection.
+- Include negative offsets (`LIST (-30s, 0, 1s, 30s, 5m)`): a curve already
+  moving before 0 means leakage or stale signals.
+- Pick horizons from the flow: milliseconds for last look, seconds to
+  minutes for electronic fills, minutes to hours for slow or voice flow, and a
+  settle horizon for IS (5 to 30 minutes for liquid FX, longer for illiquid
+  markets). `RANGE` for a curve, `LIST` for key points.
+- Report `count()` per cell and a t-statistic,
+  `markout_bps / (stddev_samp(markout) / sqrt(n))`, before calling a
+  segment good or bad.
+- Separate the segment from the market: compare its markout with all trades in
+  the same symbol and period. A segment only stands out if it differs from
+  that benchmark, not because the whole market moved. This last point is
+  general TCA practice rather than one of the recipes.
+
+```sql
+-- Markout scorecard: one pass, every horizon; swap the GROUP BY columns
+SELECT t.ecn, t.passive, h.offset / 1_000_000_000 AS horizon_sec,
+       count() AS n, sum(t.quantity) AS volume,
+       avg(CASE t.side WHEN 'buy' THEN (m.best_bid + m.best_ask) / 2 - t.price
+                       ELSE t.price - (m.best_bid + m.best_ask) / 2 END
+           / t.price * 10000) AS markout_bps,
+       sum(CASE t.side WHEN 'buy' THEN (m.best_bid + m.best_ask) / 2 - t.price
+                       ELSE t.price - (m.best_bid + m.best_ask) / 2 END
+           * t.quantity) AS pnl,
+       avg((m.best_ask - m.best_bid) / ((m.best_bid + m.best_ask) / 2) * 10000) / 2
+           AS half_spread_bps
+FROM fx_trades t
+HORIZON JOIN market_data m ON (symbol)
+LIST (-30s, 0, 1s, 30s, 5m) AS h
+WHERE t.symbol = 'EURUSD' AND t.timestamp IN '$now-1h..$now'
+ORDER BY t.ecn, t.passive, horizon_sec;
+```
+
+### Recipes
+
 All built on `HORIZON JOIN`; use them instead of hand-rolled ASOF self-joins.
 
 | Recipe | Path |

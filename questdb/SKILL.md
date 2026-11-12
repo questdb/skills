@@ -36,7 +36,8 @@ file only when the task needs it:
 | Any SQL beyond the examples in this file: read it before writing the query | `references/common-mistakes.md` |
 | "Does QuestDB have function X?", signatures, keywords, types | `references/sql-grammar.md` |
 | Indicators (MACD, ATR, Stochastic, Keltner, OBV, drawdown, ...) | `references/indicators.md` |
-| Finance/TCA or time-series recipes (markout, slippage, IS, OFI, FILL patterns, subtotals, ...) | `references/cookbook.md` |
+| Execution quality / TCA: method, sign conventions, scorecard query, then recipes (markout, slippage, IS, venue, counterparty) | `references/cookbook.md` (Finance: Post-Trade) |
+| Other time-series recipes (indicators, OFI, FILL patterns, subtotals, ...) | `references/cookbook.md` |
 | Open-ended analysis: find issues, anomalies or patterns in a dataset | `references/cookbook.md` (Analysing a Dataset) |
 | End-to-end crypto feed pipeline (cryptofeed + QuestDB) | `references/crypto-pipeline.md` |
 | Grafana, only when the user asks for it | `references/grafana.md` |
